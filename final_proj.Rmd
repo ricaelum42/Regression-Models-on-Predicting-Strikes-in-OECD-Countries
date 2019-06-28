@@ -1,0 +1,918 @@
+---
+title: "Regression models on strikes in OECD countries"
+author:
+- Chen Yuan 20561973
+- Yuke Wu 20566786
+- Bochao Zhang 20589851
+output: pdf_document
+---
+# Summary
+The goal of this project is to obtain the relation between strikes activity and some macroeconomic factors, such as unemployment rate and inflation. In order to achieve this goal, after excluding the dependent variable, we selected two candidate models by applying automated model selection and log transformation. We then provide the models' diagnostics information including residual plots, leverage and Cook's distance, so that we can choose the more suitable one.
+
+We favored one of the models based on the model selection and model diagnostics conducted.The final model indicates the necessity of log transformation and the interaction between covariates including the interaction between unemployment rate & inflation and inflation & trade union density. Moreover, discovered by observing specific graphs, the model may violate heteroscedasticity assumption and normality assumption.
+
+# Model Selection
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE}
+strikes <- read.csv("strikes_clean.csv")
+```
+
+First, we would like to take a look at the general information of the data that we are going to analyze. 
+
+  The summary of the strikes data is as follows
+```{r, echo=FALSE, comment=""}
+summary(strikes)
+```
+
+We then drew a table to obtain an overview of the correlation of all covariates excluding the country name.
+
+Correlation table
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+require(knitr)
+corr <- cor(strikes[-1])
+kable(corr)
+```
+
+Before conducting the automated model selection, we have to find out if there are any linearly dependent covariates.NA values in a model suggest that the parameter is linearly dependent with other parameters.
+```{r, echo=FALSE, comment=""}
+M0 <- lm(Strike ~ 1, data=strikes)
+Mfull <- lm(Strike ~ (.-Country)^2 + Country, data=strikes)
+alias(Mfull)
+```
+
+Since union centralization is a linearly dependent parameter as showed above, we have to exclude it from the final data set used to conduct automated model selection. We also made some changes to the raw data so that the model is found more easily and fits better. We deducted the year values from raw data by 1900, and made inflation values non-negative by adding the minimum inflation value to all values. 
+  
+We first tried automated model selection directly. We set the minimal model to be the one containing the intercept only, and the maximal model to be the one consisting country name and the interactions between any two covariates except country name, i.e. 
+
+Minimal model: $Strike \sim 1$
+
+Maximal model: $Strike \sim (Year + Inflation + Unemployment rate + Democracy index + Trade union density)^{2} + Country$
+```{r, echo=FALSE, comment=""}
+strikes1 <- strikes[-7] #remove Centr
+strikes1$Year <- strikes1$Year - 1900 #deduct year by 1900
+strikes1$Infl <- strikes1$Infl + abs(min(strikes1$Infl)) #make inflation positive
+summary(strikes1)
+M0_red <- lm(Strike ~ 1, data=strikes1) #reduced M0
+Mfull_red <- lm(Strike ~ (.-Country)^2 + Country, data=strikes1) #reduced Mfull
+```
+
+The results are listed below:
+
+Using forward selection:
+```{r, echo=FALSE, comment=""}
+Mfwd <- step(object = M0_red, scope = list(lower = M0_red, upper = Mfull_red),
+             direction = "forward", trace = FALSE)
+Mfwd$call
+```
+
+Using backward selection:
+```{r, echo=FALSE, comment=""}
+Mback <- step(object = Mfull_red, scope = list(lower = M0_red, upper = Mfull_red),
+              direction = "backward", trace = FALSE)
+Mback$call
+```
+
+Using stepwise selection:
+```{r, echo=FALSE, comment=""}
+Mstart <- lm(Strike ~ ., data=strikes1)
+Mstep <- step(object = Mstart, scope = list(lower = M0_red, upper = Mfull_red), 
+              direction = "both", trace = FALSE)
+Mstep$call
+```
+
+To analyze the suitability of the two models, we plotted a graph of residual against predicted strikes and a histogram of the residuals against their theoretical normal distribution.
+
+```{r, echo=FALSE, comment="", fig.height=3}
+par(mfrow=c(1,2))
+plot(predict(Mfwd), resid(Mfwd), pch=21, bg="black", cex = .6, xlab="Predicted Strikes",
+     ylab = "Residual Strikes", main="Forward Selection Model")
+plot(predict(Mback), resid(Mback), pch=21, bg="black", cex=.6, xlab="Predicted Strikes",
+     ylab = "Residual Strikes", main="Backward Selection Model")
+```
+
+For both graphs above, the dots seem to be a little linear rather than randomly spread around 0, which means these may not be good models for the given data since homoscedasticity assumption is violated.
+```{r, echo=FALSE, comment="", fig.height=3}
+par(mfrow=c(1,2))
+sigma.hat_fwd <- sqrt(sum(resid(Mfwd)^2)/Mfwd$df)
+sigma.hat_back <- sqrt(sum(resid(Mback)^2)/Mback$df)
+hist(resid(Mfwd)/sigma.hat_fwd, breaks = 50, freq = FALSE,
+     xlab = "Standardized Residual Strikes for forward selection", main = "")
+curve(dnorm(x), col = "red", add = TRUE)
+hist(resid(Mback)/sigma.hat_back, breaks = 50, freq = FALSE,
+     xlab = "Standardized Residual Strikes for backward selection", main = "")
+curve(dnorm(x), col = "red", add = TRUE)
+```
+
+From the histograms, the residuals are slightly biased towards positive values and have long tails, which indicates further modeling is required. Therefore, we tried log transformation.
+
+We first took log of only one side, the strike. The starting models then became:
+
+Minimal model: $log(strike +1) \sim 1$
+
+Maximal model: $log(strike +1) \sim (Year + Inflation + Unemployment rate + Democracy index + Trade union density)^{2} + Country$
+```{r, echo=FALSE, comment=""}
+M0_log <- lm(log(Strike + 1) ~ 1, data=strikes1)
+Mfull_log <- lm(log(Strike + 1) ~ (.-Country)^2 + Country, data=strikes1)
+```
+
+We then conducted automated model selection, which gives
+
+forward selection:
+```{r, echo=FALSE, comment=""}
+Mfwd_log <- step(object = M0_log, scope= list(lower = M0_log, upper = Mfull_log),
+                 direction = "forward", trace = FALSE)
+Mfwd_log$call
+```
+
+backward selection:
+```{r, echo=FALSE, comment=""}
+Mback_log <- step(object = Mfull_log, scope = list(lower = M0_log, upper = Mfull_log),
+                  direction = "backward", trace = FALSE)
+Mback_log$call
+```
+
+stepwise selection:
+```{r, echo=FALSE, comment=""}
+Mstep_start <- lm(log(Strike + 1) ~., data=strikes1)
+Mstep_log <- step(object=Mstep_start, scope = list(lower = M0_log, upper = Mfull_log),
+                  direction = "both", trace = FALSE)
+Mstep_log$call
+```
+
+We then tried log transformation on both sides. We gave new names to strike and covariates except country after they got log transformed, e.g. log_Infl is defined as log(Infl + 1). The new starting models are:
+
+Minimal model: $log(Strike + 1) \sim 1$
+
+Maximal model: $log(Strike + 1) \sim (log(Year + 1) + log(Infl + 1) + log(Unemp + 1)  + log(Demo + 1) + log(Dens + 1))^{2} + Country$
+```{r, echo=FALSE, comment=""}
+strikes_log <- strikes1
+strikes_log[-1] <- log(strikes_log[-1] + 1)
+names(strikes_log)[-1] <- paste0("log_", names(strikes_log)[-1], "_")
+M0_log_d <- lm((log_Strike_) ~ 1, data = strikes_log)
+Mfull_log_d <- lm(log_Strike_ ~ (.-Country)^2 + Country, data=strikes_log)
+```
+
+And the models given by automated model selection are:
+
+forward selection:
+```{r, echo=FALSE, comment=""}
+Mfwd_log_d <- step(object=M0_log_d, scope=list(lower = M0_log_d, upper=Mfull_log_d),
+                   direction="forward", trace=FALSE)
+Mfwd_log_d$call
+```
+
+backward selection:
+```{r, echo=FALSE, comment=""}
+Mback_log_d <- step(object=Mfull_log_d, scope=list(lower=M0_log_d, upper=Mfull_log_d),
+                    direction="backward", trace=FALSE)
+Mback_log_d$call
+```
+
+stepwise selection:
+```{r, echo=FALSE, comment=""}
+Mstart_log_d <- lm(log_Strike_ ~., data=strikes_log)
+Mstep_log_d <- step(object=Mstart_log_d, scope=list(lower=M0_log_d, upper=Mfull_log_d),
+                    direction="both", trace=FALSE)
+Mstep_log_d$call
+```
+
+Again, we plot the graph of residual against predicted strikes and the histogram of the residuals against their theoretical normal distribution.
+
+First, the log-one-side models.
+
+```{r, echo=FALSE, comment=""}
+par(mfrow=c(2,2))
+plot(predict(Mfwd_log), resid(Mfwd_log), pch=21, bg="black", cex = .6, xlab="Predicted Strikes",
+     ylab = "Residual Strikes", main="Forward Selection Model")
+plot(predict(Mback_log), resid(Mback_log), pch=21, bg="black", cex=.6, xlab="Predicted Strikes",
+     ylab = "Residual Strikes", main="Backward Selection Model")
+sigma.hat_fwdlog <- sqrt(sum(resid(Mfwd_log)^2)/Mfwd_log$df)
+sigma.hat_backlog <- sqrt(sum(resid(Mback_log)^2)/Mback_log$df)
+hist(resid(Mfwd_log)/sigma.hat_fwdlog, breaks = 50, freq = FALSE,
+     xlab = "Standardized Residual Strikes for forward selection", main = "")
+curve(dnorm(x), col = "red", add = TRUE)
+hist(resid(Mback_log)/sigma.hat_backlog, breaks = 50, freq = FALSE,
+     xlab = "Standardized Residual Strikes for backward selection", main = "")
+curve(dnorm(x), col = "red", add = TRUE)
+```
+
+These two models seem to fit better than the previous two. The dots are randomly spread around 0. For the histograms, the standardized residuals seem very normal and the tail is short and acceptable, especially the one for the backward selection model. Therefore, we chose the backward selection model as our first candidate model.
+
+We then take a look at the two graphs for the log-two-sides model.
+
+```{r, echo=FALSE, comment="", fig.height=2.5}
+par(mfrow=c(1,2))
+plot(predict(Mstep_log_d), resid(Mstep_log_d), pch=21, bg="black", cex=.6, 
+     xlab="Predicted Strikes", ylab = "Residual Strikes", 
+     main="Stepwise Selection log both sides")
+sigma.hat_step_d <- sqrt(sum(resid(Mstep_log_d)^2)/Mstep_log_d$df)
+hist(resid(Mstep_log_d)/sigma.hat_step_d, breaks=50, freq=FALSE,
+     xlab="Standardized Residual Strikes for stepwise selection", main="")
+curve(dnorm(x),col="red", add=TRUE)
+```
+
+As observed, the dots in the plot are randomly spread, and the histogram seems quite random, ignoring the little acceptable tail. This model became our second candidate model.
+
+# Model Diagnostics
+We now have our two candidate models, which are 
+
+Model 1: $log(Strike + 1) \sim Year + Unemp + Infl + Dens + Country + Year:Unemp + Year:Infl + Unemp:Infl + Infl:Dens$
+
+Model 2: $log(Strike + 1) \sim log(Year + 1) + log(Unemp + 1) + log(Infl + 1) + log(Dens + 1) + Country + log(Year + 1):log(Unemp + 1) + log(Year + 1):log(Infl + 1) + log(Unemp + 1):log(Infl + 1) + log(Infl + 1):log(Dens + 1)$
+
+However, we still need to conduct some analysis before we are able to pick the better model from the two candidates.
+
+First we calculate the AIC statistic for both models.
+
+```{r, echo=FALSE, comment=""}
+M1 <- Mback_log
+M2 <- Mstep_log_d
+Mnames <- expression(Model1, Model2)
+c(AIC1 = AIC(M1), AIC2 = AIC(M2))
+```
+Since AIC of Model 2 is larger than that of Model 1, AIC picks Model 1 over Model 2.
+
+For PRESS Statistic,
+
+```{r,echo=FALSE, comment=""}
+press1 <- resid(M1)/(1-hatvalues(M1)) # M1
+press2 <- resid(M2)/(1-hatvalues(M2)) # M2
+c(PRESS1 = sum(press1^2), PRESS2 = sum(press2^2)) # favors M1
+```
+Again, PRESS favors Model 1 since it has a smaller PRESS statistic.
+
+We then conduct cross-validation for two candidate models.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, comment="",include=FALSE}
+nreps <- 2e3 # number of replications
+ntot <- nrow(strikes1) # total number of observations
+ntrain <- 500 # size of training set
+ntest <- ntot-ntrain # size of test set
+sse1 <- rep(NA, nreps) # sum-of-square errors for each CV replication
+sse2 <- rep(NA, nreps)
+Lambda <- rep(NA, nreps) # likelihod ratio statistic for each replication
+system.time({
+for(ii in 1:nreps) {
+  if(ii%%400 == 0) message("ii = ", ii)
+  # randomly select training observations
+  train.ind <- sample(ntot, ntrain) # training observations
+  # this is the faster R way
+  M1.cv <- update(M1, subset = train.ind)
+  M2.cv <- update(M2, subset = train.ind)
+  # testing residuals for both models
+  # that is, testing data - predictions with training parameters
+  M1.res <- log(strikes1$Strike+1)[-train.ind] - predict(M1.cv, newdata = strikes1[-train.ind,])
+  M2.res <- strikes_log$log_Strike_[-train.ind] - 
+    predict(M2.cv, newdata = strikes_log[-train.ind,])
+  # total sum of square errors
+  sse1[ii] <- sum((M1.res)^2)
+  sse2[ii] <- sum((M2.res)^2)
+  # testing likelihood ratio
+  M1.sigma <- sqrt(sum(resid(M1.cv)^2)/ntrain) # MLE of sigma
+  M2.sigma <- sqrt(sum(resid(M2.cv)^2)/ntrain)
+  Lambda[ii] <- sum(dnorm(M1.res, mean = 0, sd = M1.sigma, log = TRUE))
+  Lambda[ii] <- Lambda[ii] - sum(dnorm(M2.res, mean = 0, sd = M2.sigma, log = TRUE))
+  }
+})
+```
+
+```{r,echo=FALSE, comment=""}
+c(SSE1 = mean(sse1), SSE2 = mean(sse2))
+```
+Cross-validation also favors Model 1, which has a smaller sum of square errors. 
+
+```{r, echo=FALSE, warning=FALSE, comment = "", include=FALSE}
+# VIF
+X_log <- cor(model.matrix(M1))
+X_log <- X_log[-1,-1]
+VIF_log <- diag(solve(X_log))
+
+X_log_d <- cor(model.matrix(M2))
+X_log_d <- X_log_d[-1,-1]
+VIF_log_d <- diag(solve(X_log_d))
+```
+
+From the VIF values(see Appendix 1), we can tell that all interaction terms in both models are highly correlated, and the interation terms in Model 2 may be more correlated than those in Model 1.
+
+To view in graphs, we plotted some graphs, including PRESS statistic, SSE values and Lambda.
+
+```{r, echo=FALSE, fig.height = 3}
+par(mfrow = c(1,3))
+boxplot(x = list(press1^2, press2^2), names = Mnames,
+        ylab = expression(PRESS[i]^2), col = c("yellow", "orange"))
+# plot cross-validation SSE and Lambda
+boxplot(x = list(sse1, sse2), names = Mnames, cex = .7,
+ylab = expression(SS[err]^{test}), col = c("yellow", "orange"))
+hist(Lambda, breaks = 50, freq = FALSE, xlab = expression(Lambda^{test}),
+     main = "", cex = .7)
+abline(v = mean(Lambda), col = "red") # average value
+abline(v = 1, col = "green4", cex=1.2) # to compare with 1
+```
+The box plot seems similar for both models, but $\Lambda$<1 means Model 2 is better. $\Lambda$ has a potential overfitting problem as it tends to favor the model with more covariates, so the preference may not be very accurate.
+
+```{r, echo=FALSE}
+MDstep_log <- Mstep_log
+MDstep_log_d <- Mstep_log_d
+```
+
+```{r, echo=FALSE, fig.height=3}
+par(mfrow=c(1,2))
+# Studentized residual plots
+# In _log model
+res_log <- resid(MDstep_log)
+H_log <- model.matrix(MDstep_log)
+H_log <- H_log %*% solve(crossprod(H_log),t(H_log))
+h_log <- diag(H_log)
+res.stu_log <- resid(MDstep_log)/sqrt(1-h_log)
+
+cex <- .8
+par(mar = c(2,3,.1,.1))
+plot(predict(MDstep_log), res_log, pch = 21, bg="black", cex=cex, cex.axis=cex, xlab="Predicted Strikes", ylab="Residual Strikes")
+points(predict(MDstep_log), res.stu_log, pch=21, bg="red", cex=cex)
+legend(x="bottomleft", c("Residuals", "Studentized Residuals"), pch=21, pt.bg=c("black","red"), pt.cex=cex, cex=cex)
+
+# In _log_d model
+res_log_d <- resid(MDstep_log_d)
+H_log_d <- model.matrix(MDstep_log_d)
+H_log_d <- H_log_d %*% solve(crossprod(H_log_d),t(H_log_d))
+h_log_d <- diag(H_log_d)
+res.stu_log_d <- resid(MDstep_log_d)/sqrt(1-h_log_d)
+
+cex <- .8
+par(mar = c(2,3,.1,.1))
+plot(predict(Mstep_log_d), res_log_d, pch=21, bg="black", cex=cex, cex.axis=cex, xlab="Predicted Strikes", ylab="Residual Strikes")
+points(predict(Mstep_log_d), res.stu_log_d, pch=21, bg="red", cex=cex)
+legend(x="bottomleft", c("Residuals", "Studentized Residuals"), pch=21, pt.bg=c("black","red"), pt.cex=cex, cex=cex)
+```
+
+The graphs above include predict strikes, residuals and studentized residuals. They seem similar. Both have minuscule difference between residuals and studentized residuals. This may not be a good justification tool.
+
+```{r, echo=FALSE, fig.height=4}
+# Standardize
+# log model
+# Press residual
+press_log <- res_log/(1-h_log)
+press_log_d <- res_log_d/(1-h_log_d)
+
+# Dffits residuals
+dfts_log <- dffits(MDstep_log)
+dfts_log_d <- dffits(MDstep_log_d)
+p_log <- length(coef(MDstep_log))
+n_log <- nobs(MDstep_log)
+hbar_log <- p_log/n_log
+stud.res_log <- res.stu_log*sqrt(1-hbar_log)
+press_log <- press_log*(1-hbar_log)*summary(MDstep_log)$sigma
+dfts_log <- dfts_log*(1-hbar_log)/sqrt(hbar_log)
+
+y.hat_log <- predict(MDstep_log)
+stan.res_log <- res_log/summary(MDstep_log)$sigma
+par(mfrow=c(1,2), mar=c(3,3,.1,.1))
+plot(y.hat_log,rep(0, length(y.hat_log)),type= "n", ylim =range(stan.res_log,stud.res_log, press_log, dfts_log), cex.axis=cex, xlab="Predicted Values", ylab="Residuals")
+
+segments(x0 = y.hat_log,
+         y0 = pmin(stan.res_log, stud.res_log, press_log, dfts_log),
+         y1 = pmax(stan.res_log, stud.res_log, press_log, dfts_log),
+         lty = 2)
+points(y.hat_log, stan.res_log, pch = 21, bg = "black", cex = cex)
+points(y.hat_log, stud.res_log, pch = 21, bg = "blue", cex = cex)
+points(y.hat_log, press_log, pch = 21, bg = "red", cex = cex)
+points(y.hat_log, dfts_log, pch = 21, bg = "orange", cex = cex)
+legend("topright", legend = c("Standardized", "Studentized", "PRESS", "DFFITS"),
+pch = 21, pt.bg = c("black", "blue", "red", "orange"), title = "Residual Type:",
+cex = cex, pt.cex = cex)
+
+# double log model
+p_log_d <- length(coef(MDstep_log_d))
+n_log_d <- nobs(MDstep_log_d)
+hbar_log_d <- p_log_d/n_log_d
+stud.res_log_d <- res.stu_log_d*sqrt(1-hbar_log_d)
+press_log_d <- press_log_d*(1-hbar_log_d)*summary(MDstep_log_d)$sigma
+dfts_log_d <- dfts_log_d*(1-hbar_log_d)/sqrt(hbar_log_d)
+
+y.hat_log_d <- predict(MDstep_log_d)
+stan.res_log_d <- res_log_d/summary(MDstep_log_d)$sigma
+plot(y.hat_log_d,rep(0, length(y.hat_log_d)),type= "n", ylim =range(stan.res_log_d,stud.res_log_d, press_log_d, dfts_log_d), cex.axis=cex, xlab="Predicted Values", ylab="Residuals")
+
+segments(x0 = y.hat_log_d,
+         y0 = pmin(stan.res_log_d, stud.res_log_d, press_log_d, dfts_log_d),
+         y1 = pmax(stan.res_log_d, stud.res_log_d, press_log_d, dfts_log_d),
+         lty = 2)
+points(y.hat_log_d, stan.res_log_d, pch = 21, bg = "black", cex = cex)
+points(y.hat_log_d, stud.res_log_d, pch = 21, bg = "blue", cex = cex)
+points(y.hat_log_d, press_log_d, pch = 21, bg = "red", cex = cex)
+points(y.hat_log_d, dfts_log_d, pch = 21, bg = "orange", cex = cex)
+legend("topright", legend = c("Standardized", "Studentized", "PRESS", "DFFITS"),
+pch = 21, pt.bg = c("black", "blue", "red", "orange"), title = "Residual Type:",
+cex = cex, pt.cex = cex)
+```
+After the residuals got amplified, both models have significant DIFFTS values, but DFFITS of Model 1 is obviously larger than DFFITS of Model 2 from the graph.
+
+```{r, echo=FALSE, fig.height=4}
+par(mfrow=c(1,2), mar=c(3,3,.1,.1))
+# Against leverage
+# log model
+plot(h_log, rep(0, length(y.hat_log)), type = "n", cex.axis = cex,
+     ylim = range(stan.res_log, stud.res_log, press_log, dfts_log),
+     xlab = "Leverages", ylab = "Residuals")
+segments(x0 = h_log,
+         y0 = pmin(stan.res_log, stud.res_log, press_log, dfts_log),
+         y1 = pmax(stan.res_log, stud.res_log, press_log, dfts_log),
+         lty = 2)
+points(h_log, stan.res_log, pch = 21, bg = "black", cex = cex)
+points(h_log, stud.res_log, pch = 21, bg = "blue", cex = cex)
+points(h_log, press_log, pch = 21, bg = "red", cex = cex)
+points(h_log, dfts_log, pch = 21, bg = "orange", cex = cex)
+abline(v = hbar_log, col = "grey60", lty = 2)
+legend("topright", legend = c("Standardized", "Studentized", "PRESS", "DFFITS"),
+       pch = 21, pt.bg = c("black", "blue", "red", "orange"), title = "Residual Type:",
+       cex = cex, pt.cex = cex)
+
+# double log model
+plot(h_log_d, rep(0, length(y.hat_log_d)), type = "n", cex.axis = cex,
+     ylim = range(stan.res_log_d, stud.res_log_d, press_log_d, dfts_log_d),
+     xlab = "Leverages", ylab = "Residuals")
+segments(x0 = h_log_d,
+         y0 = pmin(stan.res_log_d, stud.res_log_d, press_log_d, dfts_log_d),
+         y1 = pmax(stan.res_log_d, stud.res_log_d, press_log_d, dfts_log_d),
+         lty = 2)
+points(h_log_d, stan.res_log_d, pch = 21, bg = "black", cex = cex)
+points(h_log_d, stud.res_log_d, pch = 21, bg = "blue", cex = cex)
+points(h_log_d, press_log_d, pch = 21, bg = "red", cex = cex)
+points(h_log_d, dfts_log_d, pch = 21, bg = "orange", cex = cex)
+abline(v = hbar_log_d, col = "grey60", lty = 2)
+legend("topright", legend = c("Standardized", "Studentized", "PRESS", "DFFITS"),
+       pch = 21, pt.bg = c("black", "blue", "red", "orange"), title = "Residual Type:",
+       cex = cex, pt.cex = cex)
+```
+
+```{r, echo=FALSE, fig.height=4}
+par(mfrow=c(1,2))
+# cook's distance vs. leverage
+# log model
+D_log <- cooks.distance(MDstep_log)
+infl.ind_log <- which.max(D_log)
+lev.ind_log <- h_log > 2*hbar_log
+clrs_log <- rep("black", len = n_log)
+clrs_log[lev.ind_log] <- "blue"
+clrs_log[infl.ind_log] <- "red"
+par(mar = c(3,3,1,1))
+cex <- .6
+plot(h_log, D_log, xlab = "Leverage", ylab = "Cook's Influence Measure",
+     pch = 21, bg = clrs_log, cex = cex, cex.axis = cex)
+p_log <- length(coef(Mstep_log))
+n_log <- nrow(strikes1)
+hbar_log <- p_log/n_log
+abline(v = 2*hbar_log, col = "grey60", lty = 2) 
+legend("topleft", legend = c("High Leverage", "High Influence"), pch = 21,
+       pt.bg = c("blue", "red"), cex = cex, pt.cex = cex)
+
+# double log model
+D_log_d <- cooks.distance(MDstep_log_d)
+infl.ind_log_d <- which.max(D_log_d)
+lev.ind_log_d <- h_log_d > 2*hbar_log_d
+clrs_log_d <- rep("black", len = n_log_d)
+clrs_log_d[lev.ind_log_d] <- "blue"
+clrs_log_d[infl.ind_log_d] <- "red"
+par(mar = c(3,3,1,1))
+cex <- .6
+plot(h_log_d, D_log_d, xlab = "Leverage", ylab = "Cook's Influence Measure",
+     pch = 21, bg = clrs_log_d, cex = cex, cex.axis = cex)
+p_log_d <- length(coef(Mstep_log_d))
+n_log_d <- nrow(strikes1)
+hbar_log_d <- p_log_d/n_log_d
+abline(v = 2*hbar_log_d, col = "grey60", lty = 2) 
+legend("topleft", legend = c("High Leverage", "High Influence"), pch = 21,
+       pt.bg = c("blue", "red"), cex = cex, pt.cex = cex)
+```
+
+From the graph Cook's Distance against leverage, Model 1 has 17 observations with higher leverage, and a low-leverage high-influence observation. Model 2 has 16 observations with higher leverage, and a high-leverage high-influence observation. This may be because there are some extreme observations affected by external factors or the models are not suitable.
+
+In this particular case, it is a little difficult to tell which one is better since they have similar extreme observations. Model 2 may be better since its extreme values of leverage and Cook's distance is smaller.
+
+```{r, echo=FALSE}
+# Residual plots & QQ plots
+# log model
+par(mfrow=c(2,2))
+plot(predict(MDstep_log),residuals(MDstep_log),xlab="Fitted Values", ylab="Residuals", main="Model 1 Residuals vs Fitted Values", pch=16, cex=0.7)
+abline(h=0, col="red",lty=2)
+
+qqnorm(rstudent(MDstep_log), main="Model 1 QQ plot", pch=16, cex=.7)
+qqline(y=rstudent(MDstep_log), col="red",lty=2)
+
+# double log model
+plot(predict(MDstep_log_d),residuals(MDstep_log_d),xlab="Fitted Values", ylab="Residuals", main="Model 2 Residuals vs Fitted Values", pch=16, cex=0.7)
+abline(h=0, col="red",lty=2)
+
+qqnorm(rstudent(MDstep_log_d), main="Model 2 QQ plot", pch=16, cex=.7)
+qqline(y=rstudent(MDstep_log_d), col="red",lty=2)
+```
+Both models have large variance of residuals, which may be an indication of the violantion of homoscedascity assumption, and heavy tails in the QQ plots, which means the models violates normality assumption.
+
+
+# Conclusion
+Based on all the analysis above, we decide to retain Model 1 as the indication of strike activity and given covariates. Below is some important information of Model 1.
+
+It seems important factors of this model includes country, year and the interaction between year and unemployment rate.
+
+Some factors with high p-value retained in the final model. Most of them are countries. This may be because strike activities are influenced by business culture in the specific country.
+
+The regression assumptions that Model 1 violates are homoscedascity assumption and normality assumption. From Figure above, we can see some residuals with relatively large variance which indicates the violation of homoscedascity assupmtion. This may be suggesting that there are some external factors which are not included in the data provided. From the QQ plot above, the heavy tail shows that normality assumption does not holds in this particular case.
+
+\newpage
+#Appendix 1
+##VIF for model 1
+
+```{r,echo=FALSE, comment=""}
+VIF_log
+```
+##VIF for model 2
+
+```{r, echo=FALSE,comment=""}
+VIF_log_d
+```
+
+##Model1
+```{r, echo=FALSE, comment=""}
+summary(M1)
+```
+
+##Model2
+```{r, echo=FALSE, comment=""}
+summary(M2)
+```
+
+#Appendix 2
+##Rcode for Analysis
+```{r, eval=FALSE}
+# read data
+strikes <- read.csv("strikes_clean.csv")
+
+#correlation tables
+require(knitr)
+corr <- cor(strikes[-1])
+kable(corr)
+
+#automated model selection
+M0 <- lm(Strike ~ 1, data=strikes)
+Mfull <- lm(Strike ~ (.-Country)^2 + Country, data=strikes)
+alias(Mfull)
+
+# doing automated model selection directly
+strikes1 <- strikes[-7] #remove Centr
+strikes1$Year <- strikes1$Year - 1900 #deduct year by 1900
+strikes1$Infl <- strikes1$Infl + abs(min(strikes1$Infl)) #make inflation positive
+summary(strikes1)
+M0_red <- lm(Strike ~ 1, data=strikes1) #reduced M0
+Mfull_red <- lm(Strike ~ (.-Country)^2 + Country, data=strikes1) #reduced Mfull
+
+Mfwd <- step(object = M0_red, scope = list(lower = M0_red, upper = Mfull_red),
+             direction = "forward", trace = FALSE)
+Mfwd$call
+
+Mback <- step(object = Mfull_red, scope = list(lower = M0_red, upper = Mfull_red),
+              direction = "backward", trace = FALSE)
+Mback$call
+
+Mstart <- lm(Strike ~ ., data=strikes1)
+Mstep <- step(object = Mstart, scope = list(lower = M0_red, upper = Mfull_red), 
+              direction = "both", trace = FALSE)
+Mstep$call
+
+par(mfrow=c(1,2))
+plot(predict(Mfwd), resid(Mfwd), pch=21, bg="black", cex = .6, xlab="Predicted Strikes",
+     ylab = "Residual Strikes", main="Forward Selection Model")
+plot(predict(Mback), resid(Mback), pch=21, bg="black", cex=.6, xlab="Predicted Strikes",
+     ylab = "Residual Strikes", main="Backward Selection Model")
+
+par(mfrow=c(1,2))
+sigma.hat_fwd <- sqrt(sum(resid(Mfwd)^2)/Mfwd$df)
+sigma.hat_back <- sqrt(sum(resid(Mback)^2)/Mback$df)
+hist(resid(Mfwd)/sigma.hat_fwd, breaks = 50, freq = FALSE,
+     xlab = "Standardized Residual Strikes for forward selection", main = "")
+curve(dnorm(x), col = "red", add = TRUE)
+hist(resid(Mback)/sigma.hat_back, breaks = 50, freq = FALSE,
+     xlab = "Standardized Residual Strikes for backward selection", main = "")
+curve(dnorm(x), col = "red", add = TRUE)
+
+
+# doing log transfomation on left side only
+M0_log <- lm(log(Strike + 1) ~ 1, data=strikes1)
+Mfull_log <- lm(log(Strike + 1) ~ (.-Country)^2 + Country, data=strikes1)
+
+Mfwd_log <- step(object = M0_log, scope= list(lower = M0_log, upper = Mfull_log),
+                 direction = "forward", trace = FALSE)
+Mfwd_log$call
+
+Mback_log <- step(object = Mfull_log, scope = list(lower = M0_log, upper = Mfull_log),
+                  direction = "backward", trace = FALSE)
+Mback_log$call
+
+Mstep_start <- lm(log(Strike + 1) ~., data=strikes1)
+Mstep_log <- step(object=Mstep_start, scope = list(lower = M0_log, upper = Mfull_log),
+                  direction = "both", trace = FALSE)
+Mstep_log$call
+
+#doing log transcormation on both sides
+strikes_log <- strikes1
+strikes_log[-1] <- log(strikes_log[-1] + 1)
+names(strikes_log)[-1] <- paste0("log_", names(strikes_log)[-1], "_")
+M0_log_d <- lm((log_Strike_) ~ 1, data = strikes_log)
+Mfull_log_d <- lm(log_Strike_ ~ (.-Country)^2 + Country, data=strikes_log)
+
+Mfwd_log_d <- step(object=M0_log_d, scope=list(lower = M0_log_d, upper=Mfull_log_d),
+                   direction="forward", trace=FALSE)
+Mfwd_log_d$call
+
+Mback_log_d <- step(object=Mfull_log_d, scope=list(lower=M0_log_d, upper=Mfull_log_d),
+                    direction="backward", trace=FALSE)
+Mback_log_d$call
+
+Mstart_log_d <- lm(log_Strike_ ~., data=strikes_log)
+Mstep_log_d <- step(object=Mstart_log_d, scope=list(lower=M0_log_d, upper=Mfull_log_d),
+                    direction="both", trace=FALSE)
+Mstep_log_d$call
+
+par(mfrow=c(2,2))
+plot(predict(Mfwd_log), resid(Mfwd_log), pch=21, bg="black", cex = .6, 
+     xlab="Predicted Strikes",
+     ylab = "Residual Strikes", main="Forward Selection Model")
+plot(predict(Mback_log), resid(Mback_log), pch=21, bg="black", cex=.6, 
+     xlab="Predicted Strikes",
+     ylab = "Residual Strikes", main="Backward Selection Model")
+sigma.hat_fwdlog <- sqrt(sum(resid(Mfwd_log)^2)/Mfwd_log$df)
+sigma.hat_backlog <- sqrt(sum(resid(Mback_log)^2)/Mback_log$df)
+hist(resid(Mfwd_log)/sigma.hat_fwdlog, breaks = 50, freq = FALSE,
+     xlab = "Standardized Residual Strikes for forward selection", main = "")
+curve(dnorm(x), col = "red", add = TRUE)
+hist(resid(Mback_log)/sigma.hat_backlog, breaks = 50, freq = FALSE,
+     xlab = "Standardized Residual Strikes for backward selection", main = "")
+curve(dnorm(x), col = "red", add = TRUE)
+
+par(mfrow=c(1,2))
+plot(predict(Mstep_log_d), resid(Mstep_log_d), pch=21, bg="black", cex=.6, 
+     xlab="Predicted Strikes", ylab = "Residual Strikes", 
+     main="Stepwise Selection log both sides")
+sigma.hat_step_d <- sqrt(sum(resid(Mstep_log_d)^2)/Mstep_log_d$df)
+hist(resid(Mstep_log_d)/sigma.hat_step_d, breaks=50, freq=FALSE,
+     xlab="Standardized Residual Strikes for stepwise selection", main="")
+curve(dnorm(x),col="red", add=TRUE)
+
+# Model Diagnostics
+M1 <- Mback_log
+M2 <- Mstep_log_d
+Mnames <- expression(Model1, Model2)
+c(AIC1 = AIC(M1), AIC2 = AIC(M2))
+
+press1 <- resid(M1)/(1-hatvalues(M1)) # M1
+press2 <- resid(M2)/(1-hatvalues(M2)) # M2
+c(PRESS1 = sum(press1^2), PRESS2 = sum(press2^2)) # favors M1
+
+nreps <- 2e3 # number of replications
+ntot <- nrow(strikes1) # total number of observations
+ntrain <- 500 # size of training set
+ntest <- ntot-ntrain # size of test set
+sse1 <- rep(NA, nreps) # sum-of-square errors for each CV replication
+sse2 <- rep(NA, nreps)
+Lambda <- rep(NA, nreps) # likelihod ratio statistic for each replication
+system.time({
+for(ii in 1:nreps) {
+  if(ii%%400 == 0) message("ii = ", ii)
+  # randomly select training observations
+  train.ind <- sample(ntot, ntrain) # training observations
+  # this is the faster R way
+  M1.cv <- update(M1, subset = train.ind)
+  M2.cv <- update(M2, subset = train.ind)
+  # testing residuals for both models
+  # that is, testing data - predictions with training parameters
+  M1.res <- log(strikes1$Strike+1)[-train.ind] - 
+    predict(M1.cv, newdata = strikes1[-train.ind,])
+  M2.res <- strikes_log$log_Strike_[-train.ind] - 
+    predict(M2.cv, newdata = strikes_log[-train.ind,])
+  # total sum of square errors
+  sse1[ii] <- sum((M1.res)^2)
+  sse2[ii] <- sum((M2.res)^2)
+  # testing likelihood ratio
+  M1.sigma <- sqrt(sum(resid(M1.cv)^2)/ntrain) # MLE of sigma
+  M2.sigma <- sqrt(sum(resid(M2.cv)^2)/ntrain)
+  Lambda[ii] <- sum(dnorm(M1.res, mean = 0, sd = M1.sigma, log = TRUE))
+  Lambda[ii] <- Lambda[ii] - sum(dnorm(M2.res, mean = 0, sd = M2.sigma, log = TRUE))
+  }
+})
+
+c(SSE1 = mean(sse1), SSE2 = mean(sse2))
+
+# VIF
+X_log <- cor(model.matrix(M1))
+X_log <- X_log[-1,-1]
+VIF_log <- diag(solve(X_log))
+
+X_log_d <- cor(model.matrix(M2))
+X_log_d <- X_log_d[-1,-1]
+VIF_log_d <- diag(solve(X_log_d))
+
+par(mfrow = c(1,3))
+boxplot(x = list(press1^2, press2^2), names = Mnames,
+        ylab = expression(PRESS[i]^2), col = c("yellow", "orange"))
+# plot cross-validation SSE and Lambda
+boxplot(x = list(sse1, sse2), names = Mnames, cex = .7,
+ylab = expression(SS[err]^{test}), col = c("yellow", "orange"))
+hist(Lambda, breaks = 50, freq = FALSE, xlab = expression(Lambda^{test}),
+     main = "", cex = .7)
+abline(v = mean(Lambda), col = "red") # average value
+abline(v = 1, col = "cadetblue") # to compare with 1
+
+MDstep_log <- Mstep_log
+MDstep_log_d <- Mstep_log_d
+
+par(mfrow=c(1,2))
+# Studentized residual plots
+# In _log model
+res_log <- resid(MDstep_log)
+H_log <- model.matrix(MDstep_log)
+H_log <- H_log %*% solve(crossprod(H_log),t(H_log))
+h_log <- diag(H_log)
+res.stu_log <- resid(MDstep_log)/sqrt(1-h_log)
+
+cex <- .8
+par(mar = c(2,3,.1,.1))
+plot(predict(MDstep_log), res_log, pch = 21, bg="black", cex=cex, cex.axis=cex, 
+     xlab="Predicted Strikes", ylab="Residual Strikes")
+points(predict(MDstep_log), res.stu_log, pch=21, bg="red", cex=cex)
+legend(x="bottomleft", c("Residuals", "Studentized Residuals"), pch=21, 
+       pt.bg=c("black","red"), pt.cex=cex, cex=cex)
+
+# In _log_d model
+res_log_d <- resid(MDstep_log_d)
+H_log_d <- model.matrix(MDstep_log_d)
+H_log_d <- H_log_d %*% solve(crossprod(H_log_d),t(H_log_d))
+h_log_d <- diag(H_log_d)
+res.stu_log_d <- resid(MDstep_log_d)/sqrt(1-h_log_d)
+
+cex <- .8
+par(mar = c(2,3,.1,.1))
+plot(predict(Mstep_log_d), res_log_d, pch=21, bg="black", cex=cex, cex.axis=cex, 
+     xlab="Predicted Strikes", ylab="Residual Strikes")
+points(predict(Mstep_log_d), res.stu_log_d, pch=21, bg="red", cex=cex)
+legend(x="bottomleft", c("Residuals", "Studentized Residuals"), pch=21, 
+       pt.bg=c("black","red"), pt.cex=cex, cex=cex)
+
+# Standardize
+# log model
+# Press residual
+press_log <- res_log/(1-h_log)
+press_log_d <- res_log_d/(1-h_log_d)
+
+# Dffits residuals
+dfts_log <- dffits(MDstep_log)
+dfts_log_d <- dffits(MDstep_log_d)
+p_log <- length(coef(MDstep_log))
+n_log <- nobs(MDstep_log)
+hbar_log <- p_log/n_log
+stud.res_log <- res.stu_log*sqrt(1-hbar_log)
+press_log <- press_log*(1-hbar_log)*summary(MDstep_log)$sigma
+dfts_log <- dfts_log*(1-hbar_log)/sqrt(hbar_log)
+
+y.hat_log <- predict(MDstep_log)
+stan.res_log <- res_log/summary(MDstep_log)$sigma
+par(mfrow=c(1,2), mar=c(3,3,.1,.1))
+plot(y.hat_log,rep(0, length(y.hat_log)),type= "n", 
+     ylim =range(stan.res_log,stud.res_log, press_log, dfts_log), 
+     cex.axis=cex, xlab="Predicted Values", ylab="Residuals")
+
+segments(x0 = y.hat_log,
+         y0 = pmin(stan.res_log, stud.res_log, press_log, dfts_log),
+         y1 = pmax(stan.res_log, stud.res_log, press_log, dfts_log),
+         lty = 2)
+points(y.hat_log, stan.res_log, pch = 21, bg = "black", cex = cex)
+points(y.hat_log, stud.res_log, pch = 21, bg = "blue", cex = cex)
+points(y.hat_log, press_log, pch = 21, bg = "red", cex = cex)
+points(y.hat_log, dfts_log, pch = 21, bg = "orange", cex = cex)
+legend("topright", legend = c("Standardized", "Studentized", "PRESS", "DFFITS"),
+pch = 21, pt.bg = c("black", "blue", "red", "orange"), title = "Residual Type:",
+cex = cex, pt.cex = cex)
+
+# double log model
+p_log_d <- length(coef(MDstep_log_d))
+n_log_d <- nobs(MDstep_log_d)
+hbar_log_d <- p_log_d/n_log_d
+stud.res_log_d <- res.stu_log_d*sqrt(1-hbar_log_d)
+press_log_d <- press_log_d*(1-hbar_log_d)*summary(MDstep_log_d)$sigma
+dfts_log_d <- dfts_log_d*(1-hbar_log_d)/sqrt(hbar_log_d)
+
+y.hat_log_d <- predict(MDstep_log_d)
+stan.res_log_d <- res_log_d/summary(MDstep_log_d)$sigma
+plot(y.hat_log_d,rep(0, length(y.hat_log_d)),type= "n", 
+     ylim =range(stan.res_log_d,stud.res_log_d, press_log_d, dfts_log_d), 
+     cex.axis=cex, 
+     xlab="Predicted Values", ylab="Residuals")
+
+segments(x0 = y.hat_log_d,
+         y0 = pmin(stan.res_log_d, stud.res_log_d, press_log_d, dfts_log_d),
+         y1 = pmax(stan.res_log_d, stud.res_log_d, press_log_d, dfts_log_d),
+         lty = 2)
+points(y.hat_log_d, stan.res_log_d, pch = 21, bg = "black", cex = cex)
+points(y.hat_log_d, stud.res_log_d, pch = 21, bg = "blue", cex = cex)
+points(y.hat_log_d, press_log_d, pch = 21, bg = "red", cex = cex)
+points(y.hat_log_d, dfts_log_d, pch = 21, bg = "orange", cex = cex)
+legend("topright", legend = c("Standardized", "Studentized", "PRESS", "DFFITS"),
+pch = 21, pt.bg = c("black", "blue", "red", "orange"), title = "Residual Type:",
+cex = cex, pt.cex = cex)
+
+par(mfrow=c(1,2), mar=c(3,3,.1,.1))
+# Against leverage
+# log model
+plot(h_log, rep(0, length(y.hat_log)), type = "n", cex.axis = cex,
+     ylim = range(stan.res_log, stud.res_log, press_log, dfts_log),
+     xlab = "Leverages", ylab = "Residuals")
+segments(x0 = h_log,
+         y0 = pmin(stan.res_log, stud.res_log, press_log, dfts_log),
+         y1 = pmax(stan.res_log, stud.res_log, press_log, dfts_log),
+         lty = 2)
+points(h_log, stan.res_log, pch = 21, bg = "black", cex = cex)
+points(h_log, stud.res_log, pch = 21, bg = "blue", cex = cex)
+points(h_log, press_log, pch = 21, bg = "red", cex = cex)
+points(h_log, dfts_log, pch = 21, bg = "orange", cex = cex)
+abline(v = hbar_log, col = "grey60", lty = 2)
+legend("topright", legend = c("Standardized", "Studentized", "PRESS", "DFFITS"),
+       pch = 21, pt.bg = c("black", "blue", "red", "orange"), 
+       title = "Residual Type:",
+       cex = cex, pt.cex = cex)
+
+# double log model
+plot(h_log_d, rep(0, length(y.hat_log_d)), type = "n", cex.axis = cex,
+     ylim = range(stan.res_log_d, stud.res_log_d, press_log_d, dfts_log_d),
+     xlab = "Leverages", ylab = "Residuals")
+segments(x0 = h_log_d,
+         y0 = pmin(stan.res_log_d, stud.res_log_d, press_log_d, dfts_log_d),
+         y1 = pmax(stan.res_log_d, stud.res_log_d, press_log_d, dfts_log_d),
+         lty = 2)
+points(h_log_d, stan.res_log_d, pch = 21, bg = "black", cex = cex)
+points(h_log_d, stud.res_log_d, pch = 21, bg = "blue", cex = cex)
+points(h_log_d, press_log_d, pch = 21, bg = "red", cex = cex)
+points(h_log_d, dfts_log_d, pch = 21, bg = "orange", cex = cex)
+abline(v = hbar_log_d, col = "grey60", lty = 2)
+legend("topright", legend = c("Standardized", "Studentized", "PRESS", "DFFITS"),
+       pch = 21, pt.bg = c("black", "blue", "red", "orange"), 
+       title = "Residual Type:",
+       cex = cex, pt.cex = cex)
+
+par(mfrow=c(1,2))
+# cook's distance vs. leverage
+# log model
+D_log <- cooks.distance(MDstep_log)
+infl.ind_log <- which.max(D_log)
+lev.ind_log <- h_log > 2*hbar_log
+clrs_log <- rep("black", len = n_log)
+clrs_log[lev.ind_log] <- "blue"
+clrs_log[infl.ind_log] <- "red"
+par(mar = c(3,3,1,1))
+cex <- .6
+plot(h_log, D_log, xlab = "Leverage", ylab = "Cook's Influence Measure",
+     pch = 21, bg = clrs_log, cex = cex, cex.axis = cex)
+p_log <- length(coef(Mstep_log))
+n_log <- nrow(strikes1)
+hbar_log <- p_log/n_log
+abline(v = 2*hbar_log, col = "grey60", lty = 2) 
+legend("topleft", legend = c("High Leverage", "High Influence"), pch = 21,
+       pt.bg = c("blue", "red"), cex = cex, pt.cex = cex)
+
+# double log model
+D_log_d <- cooks.distance(MDstep_log_d)
+infl.ind_log_d <- which.max(D_log_d)
+lev.ind_log_d <- h_log_d > 2*hbar_log_d
+clrs_log_d <- rep("black", len = n_log_d)
+clrs_log_d[lev.ind_log_d] <- "blue"
+clrs_log_d[infl.ind_log_d] <- "red"
+par(mar = c(3,3,1,1))
+cex <- .6
+plot(h_log_d, D_log_d, xlab = "Leverage", ylab = "Cook's Influence Measure",
+     pch = 21, bg = clrs_log_d, cex = cex, cex.axis = cex)
+p_log_d <- length(coef(Mstep_log_d))
+n_log_d <- nrow(strikes1)
+hbar_log_d <- p_log_d/n_log_d
+abline(v = 2*hbar_log_d, col = "grey60", lty = 2) 
+legend("topleft", legend = c("High Leverage", "High Influence"), pch = 21,
+       pt.bg = c("blue", "red"), cex = cex, pt.cex = cex)
+
+# Residual plots & QQ plots
+# log model
+par(mfrow=c(2,2))
+plot(predict(MDstep_log),residuals(MDstep_log),xlab="Fitted Values", 
+     ylab="Residuals", main="Model 1 Residuals vs Fitted Values", pch=16, cex=0.7)
+abline(h=0, col="red",lty=2)
+
+qqnorm(rstudent(MDstep_log), main="Model 1 QQ plot", pch=16, cex=.7)
+qqline(y=rstudent(MDstep_log), col="red",lty=2)
+
+# double log model
+plot(predict(MDstep_log_d),residuals(MDstep_log_d),xlab="Fitted Values", 
+     ylab="Residuals", main="Model 2 Residuals vs Fitted Values", pch=16, cex=0.7)
+abline(h=0, col="red",lty=2)
+
+qqnorm(rstudent(MDstep_log_d), main="Model 2 QQ plot", pch=16, cex=.7)
+qqline(y=rstudent(MDstep_log_d), col="red",lty=2)
+```
